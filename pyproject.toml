@@ -1,0 +1,60 @@
+[project]
+name = "sonicwave_ingestion_pipeline"
+version = "0.1.0"
+description = "Reusable, tested PySpark transforms for SonicWave playback events."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pyspark==4.0.0",
+]
+
+# Dev-only tooling (PEP 735 dependency group). `uv sync` installs it by
+# default, so `uv run pytest` / `ruff` / `mypy` work with no extra flags —
+# locally AND in CI. CI runs `uv sync` once, then the same `uv run` commands.
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+sonicwave-run-bronze-plays = "sonicwave_ingestion.scripts.run_bronze_plays:main"
+sonicwave-run-bronze-users = "sonicwave_ingestion.scripts.run_bronze_users:main"
+sonicwave-run-silver-plays = "sonicwave_ingestion.scripts.run_silver_plays:main"
+sonicwave-run-silver-users = "sonicwave_ingestion.scripts.run_silver_users:main"
+
+[tool.hatch.build.targets.wheel]
+only-include = ["src/sonicwave_ingestion"]
+sources = ["src"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/README.md",
+    "/pyproject.toml",
+    "/seed",
+    "/src/sonicwave_ingestion",
+    "/tests",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src"]
+disallow_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
