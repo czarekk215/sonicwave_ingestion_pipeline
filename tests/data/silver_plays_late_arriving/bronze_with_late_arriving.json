@@ -1,0 +1,2 @@
+{"play_id":"200","user_id":"20","content_id":"30","device_id":"4","played_at":"2026-03-04T00:15:00","created_at":"2026-03-04T00:15:00","ms_played":"180000","ingested_at":"2026-03-04T02:00:00","source_file":"file:///bronze/2026-03-04/plays.json","snapshot_date":"2026-03-04"}
+{"play_id":"201","user_id":"21","content_id":"31","device_id":"5","played_at":"2026-03-02T23:50:00","created_at":"2026-03-03T07:10:00","ms_played":"240000","ingested_at":"2026-03-04T02:00:00","source_file":"file:///bronze/2026-03-04/plays.json","snapshot_date":"2026-03-03"}

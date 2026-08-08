@@ -1,6 +1,8 @@
 .venv
 artifacts/
 data/
+!tests/data/
+!tests/data/**
 .mypy_cache
 .pytest_cache
 .ruff_cache
