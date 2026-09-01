@@ -30,6 +30,7 @@ silver_plays_schema = StructType(
         StructField("content_id", IntegerType(), False),
         StructField("device_id", IntegerType(), False),
         StructField("played_at", TimestampType(), False),
+        StructField("event_date", DateType(), False),
         StructField("created_at", TimestampType(), False),
         StructField("late_arriving_data", BooleanType(), False),
         StructField("ms_played", IntegerType(), False),

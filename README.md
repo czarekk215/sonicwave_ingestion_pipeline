@@ -19,8 +19,11 @@ typed, columnar and cheap to scan.
 Current loading model:
 - Bronze is loaded per `snapshot_date`.
 - Bronze writes are partition-overwrite by `snapshot_date`, so rerunning the same drop replaces only that partition.
-- Silver reads from Bronze parquet and processes the latest Bronze ingestion for a table.
-- `plays` keeps `late_arriving_data = true` when Bronze arrival is more than 24 hours later than `snapshot_date`.
+- Bronze entry-points accept `--bronze-path` (default `./data/bronze`), while Silver entry-points accept `--silver-path` (default `./data/silver`).
+- Silver reads the Bronze partition selected by `--snapshot-date`.
+- `plays` rewrites the complete processed `snapshot_date` partition in Silver. A corrected or re-dropped day therefore retains its existing rows, incorporates new `play_id` values and preserves their surrogate keys.
+- `plays_errors` is also a complete per-day result: a corrected re-drop with no remaining errors clears that day's error partition.
+- `plays` keeps `snapshot_date` as the physical arrival partition and derives `event_date` from `played_at` for event-time analysis. `late_arriving_data` is true when `created_at` falls on a later date than `played_at`.
 - `users` is historised as SCD2 with `valid_from`, `valid_to` and `is_current`, ordered by `coalesce(updated_at, created_at)`.
 
 ## Local Run
@@ -40,11 +43,11 @@ uv run python seed/generate_seed.py --output ./data/source
 Run Bronze:
 
 ```bash
-uv run python src/sonicwave_ingestion/scripts/run_bronze_plays.py \
+uv run sonicwave-run-bronze-plays \
   --source ./data/source/plays \
   --snapshot-date 2026-03-01
 
-uv run python src/sonicwave_ingestion/scripts/run_bronze_users.py \
+uv run sonicwave-run-bronze-users \
   --source ./data/source/users \
   --snapshot-date 2026-03-01
 ```
@@ -52,11 +55,13 @@ uv run python src/sonicwave_ingestion/scripts/run_bronze_users.py \
 Run Silver:
 
 ```bash
-uv run python src/sonicwave_ingestion/scripts/run_silver_plays.py \
-  --source ./data/bronze/plays
+uv run sonicwave-run-silver-plays \
+  --source ./data/bronze/plays \
+  --snapshot-date 2026-03-01
 
-uv run python src/sonicwave_ingestion/scripts/run_silver_users.py \
-  --source ./data/bronze/users
+uv run sonicwave-run-silver-users \
+  --source ./data/bronze/users \
+  --snapshot-date 2026-03-01
 ```
 
 Inspect Silver `plays`:

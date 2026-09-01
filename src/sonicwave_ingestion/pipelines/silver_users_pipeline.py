@@ -13,14 +13,24 @@ from sonicwave_ingestion.silver import (
 from sonicwave_ingestion.validates import prepare_silver_users
 
 
-def run_silver_users(spark: SparkSession, source_path: str) -> None:
-    silver_users_loaded, cast_errors = silver_load_bronze(spark, source_path, silver_users_schema)
+def run_silver_users(
+    spark: SparkSession,
+    source_path: str,
+    snapshot_date: str,
+    silver_path: str,
+) -> None:
+    silver_users_loaded, cast_errors = silver_load_bronze(
+        spark,
+        source_path,
+        silver_users_schema,
+        snapshot_date,
+    )
     deduplicated_users, users_errors = prepare_silver_users(silver_users_loaded, cast_errors)
 
     if not users_errors.isEmpty():
-        save_silver(users_errors, "users_errors")
+        save_silver(users_errors, "users_errors", silver_path)
 
-    current_silver_path = Path("data/silver/users")
+    current_silver_path = Path(silver_path) / "users"
     if current_silver_path.exists():
         current_silver = silver_load_current_silver(spark, str(current_silver_path))
     else:
@@ -28,4 +38,4 @@ def run_silver_users(spark: SparkSession, source_path: str) -> None:
 
     silver_users = silver_scd2(current_silver, deduplicated_users)
 
-    replace_silver(silver_users, "users")
+    replace_silver(silver_users, "users", silver_path)

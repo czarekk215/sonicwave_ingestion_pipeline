@@ -1,5 +1,9 @@
+import shutil
+from datetime import date
 from functools import reduce
 from operator import or_
+from pathlib import Path
+from uuid import uuid4
 
 from pyspark.sql import Column, DataFrame, SparkSession, Window
 from pyspark.sql import functions as F
@@ -10,17 +14,14 @@ def silver_load_bronze(
     spark: SparkSession,
     path: str,
     schema: StructType,
+    snapshot_date: str,
     derived_columns: dict[str, Column] | None = None,
 ) -> tuple[DataFrame, DataFrame]:
     bronze = spark.read.parquet(path)
 
-    newest_ingested_at_row = bronze.agg(F.max("ingested_at").alias("newest_ingested_at")).first()
-    newest_ingested_at = (
-        newest_ingested_at_row["newest_ingested_at"] if newest_ingested_at_row is not None else 0
-    ) or 0
-    df = bronze.filter(F.col("ingested_at") == F.lit(newest_ingested_at)).withColumnRenamed(
-        "ingested_at", "bronze_ingested_at"
-    )
+    df = bronze.filter(
+        F.col("snapshot_date") == F.lit(snapshot_date).cast("date")
+    ).withColumnRenamed("ingested_at", "bronze_ingested_at")
 
     if derived_columns:
         for column_name, expression in derived_columns.items():
@@ -72,27 +73,77 @@ def silver_facts(current_silver: DataFrame, loaded_silver: DataFrame, sk_name: s
     max_sk_row = current_silver.agg(F.max(sk_name).alias("max_sk")).first()
     max_sk = (max_sk_row["max_sk"] if max_sk_row is not None else 0) or 0
 
-    return loaded_silver.join(
-        current_silver.select("play_id"), on="play_id", how="left_anti"
-    ).withColumn(sk_name, (F.row_number().over(window) + F.lit(max_sk)).cast("long"))
+    existing_keys = current_silver.select("play_id")
+    existing_partition_keys = current_silver.select("play_id", "snapshot_date", sk_name)
+
+    existing_records = loaded_silver.join(
+        existing_partition_keys,
+        on=["play_id", "snapshot_date"],
+        how="inner",
+    )
+    new_records = loaded_silver.join(existing_keys, on="play_id", how="left_anti").withColumn(
+        sk_name,
+        (F.row_number().over(window) + F.lit(max_sk)).cast("long"),
+    )
+
+    # Return the complete partition so dynamic overwrite cannot discard old rows.
+    return existing_records.unionByName(new_records)
 
 
-def save_silver(data: DataFrame, source_name: str) -> None:
+def save_silver(
+    data: DataFrame,
+    source_name: str,
+    silver_path: str,
+    clear_empty_snapshot_dates: set[date] | None = None,
+) -> None:
+    if clear_empty_snapshot_dates:
+        written_snapshot_dates = {
+            row["snapshot_date"] for row in data.select("snapshot_date").distinct().collect()
+        }
+        for snapshot_date in clear_empty_snapshot_dates - written_snapshot_dates:
+            empty_partition_path = (
+                Path(silver_path) / source_name / f"snapshot_date={snapshot_date}"
+            )
+            if empty_partition_path.exists():
+                shutil.rmtree(empty_partition_path)
+
+    if data.isEmpty():
+        return
+
     (
         data.write.option("partitionOverwriteMode", "dynamic")
         .mode("overwrite")
         .partitionBy("snapshot_date")
-        .parquet(f"data/silver/{source_name}")
+        .parquet(f"{silver_path}/{source_name}")
     )
 
 
-def replace_silver(data: DataFrame, source_name: str) -> None:
-    data.write.mode("overwrite").partitionBy("snapshot_date").parquet(f"data/silver/{source_name}")
+def replace_silver(data: DataFrame, source_name: str, silver_path: str) -> None:
+    target_path = Path(silver_path) / source_name
+    temporary_path = target_path.parent / f".{source_name}.tmp-{uuid4().hex}"
+    backup_path = target_path.parent / f".{source_name}.backup-{uuid4().hex}"
+
+    # Materialize the plan away from its input before touching the current dimension.
+    data.write.mode("overwrite").partitionBy("snapshot_date").parquet(str(temporary_path))
+
+    moved_current_dimension = False
+    try:
+        if target_path.exists():
+            target_path.rename(backup_path)
+            moved_current_dimension = True
+        temporary_path.rename(target_path)
+    except OSError:
+        if moved_current_dimension and backup_path.exists() and not target_path.exists():
+            backup_path.rename(target_path)
+        raise
+    else:
+        if backup_path.exists():
+            shutil.rmtree(backup_path)
 
 
 def silver_scd2(current_silver: DataFrame, loaded_silver: DataFrame) -> DataFrame:
     window = Window.orderBy("user_id")
-    tracked_columns = ["email", "country", "plan_tier", "created_at", "updated_at"]
+    tracked_columns = ["email", "country", "plan_tier"]
     dimension_columns = [
         "user_id",
         "email",

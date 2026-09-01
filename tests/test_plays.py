@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import shutil
 from datetime import date, datetime
 from pathlib import Path
 
 import pytest
 from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import functions as F
 from pyspark.sql.types import LongType, StringType, StructField, StructType
 
 from sonicwave_ingestion.pipelines.silver_plays_pipeline import run_silver_plays
@@ -25,11 +25,8 @@ PLAYS_ERROR_SCHEMA = StructType(
 
 
 @pytest.fixture
-def pipeline_workdir(spark_workdir: Path) -> Path:
-    data_path = spark_workdir / "data"
-    if data_path.exists():
-        shutil.rmtree(data_path)
-    return spark_workdir
+def pipeline_workdir(tmp_path: Path) -> Path:
+    return tmp_path
 
 
 def _fixture_path(data_dir: Path, filename: str) -> Path:
@@ -104,6 +101,7 @@ def test_validate_plays_flags_invalid_rows(
                 "content_id": 20,
                 "device_id": 1,
                 "played_at": datetime(2026, 3, 1, 12, 0, 0),
+                "event_date": date(2026, 3, 1),
                 "created_at": datetime(2026, 3, 1, 12, 0, 0),
                 "late_arriving_data": False,
                 "ms_played": ms_played,
@@ -131,6 +129,7 @@ def test_deduplicate_plays_keeps_most_recent_record(spark: SparkSession) -> None
                 "content_id": 20,
                 "device_id": 1,
                 "played_at": datetime(2026, 3, 1, 12, 0, 0),
+                "event_date": date(2026, 3, 1),
                 "created_at": datetime(2026, 3, 1, 12, 0, 0),
                 "late_arriving_data": False,
                 "ms_played": 180000,
@@ -144,6 +143,7 @@ def test_deduplicate_plays_keeps_most_recent_record(spark: SparkSession) -> None
                 "content_id": 20,
                 "device_id": 1,
                 "played_at": datetime(2026, 3, 1, 12, 0, 0),
+                "event_date": date(2026, 3, 1),
                 "created_at": datetime(2026, 3, 1, 12, 5, 0),
                 "late_arriving_data": False,
                 "ms_played": 181000,
@@ -182,7 +182,7 @@ def test_run_silver_plays_uses_newest_snapshot_and_assigns_sk(
         bronze_path,
     )
 
-    run_silver_plays(spark, str(bronze_path))
+    run_silver_plays(spark, str(bronze_path), "2026-03-01", str(silver_path.parent))
 
     first_actual = spark.read.parquet(str(silver_path))
     first_expected = _read_expected_silver(
@@ -203,7 +203,7 @@ def test_run_silver_plays_uses_newest_snapshot_and_assigns_sk(
         bronze_path,
     )
 
-    run_silver_plays(spark, str(bronze_path))
+    run_silver_plays(spark, str(bronze_path), "2026-03-02", str(silver_path.parent))
 
     reloaded_actual = spark.read.parquet(str(silver_path))
     reloaded_expected = _read_expected_silver(
@@ -217,6 +217,55 @@ def test_run_silver_plays_uses_newest_snapshot_and_assigns_sk(
         "play_sk",
     )
     assert not errors_path.exists()
+
+
+def test_run_silver_plays_redrop_preserves_existing_partition_rows(
+    spark: SparkSession,
+    data_dir: Path,
+    pipeline_workdir: Path,
+) -> None:
+    bronze_path = pipeline_workdir / "data" / "bronze" / "plays"
+    silver_path = pipeline_workdir / "data" / "silver" / "plays"
+    initial_source = _fixture_path(data_dir, "bronze_one_snapshot.json")
+
+    _write_bronze_parquet(spark, initial_source, bronze_path)
+    run_silver_plays(spark, str(bronze_path), "2026-03-01", str(silver_path.parent))
+
+    redrop_ingested_at = datetime(2026, 3, 1, 11, 0, 0)
+    initial_bronze = spark.read.parquet(str(bronze_path)).withColumn(
+        "ingested_at",
+        F.lit(redrop_ingested_at),
+    )
+    redropped_bronze = initial_bronze.unionByName(
+        spark.createDataFrame(
+            [
+                {
+                    "play_id": "102",
+                    "user_id": "3",
+                    "content_id": "12",
+                    "device_id": "3",
+                    "played_at": "2026-03-01 02:00:00",
+                    "created_at": "2026-03-01 02:00:00",
+                    "ms_played": "300000",
+                    "ingested_at": redrop_ingested_at,
+                    "source_file": "file:///bronze/2026-03-01/plays_redrop.json",
+                    "snapshot_date": date(2026, 3, 1),
+                }
+            ],
+            schema=bronze_plays_schema,
+        )
+    ).localCheckpoint(eager=True)
+    redropped_bronze.write.mode("overwrite").parquet(str(bronze_path))
+
+    run_silver_plays(spark, str(bronze_path), "2026-03-01", str(silver_path.parent))
+
+    actual = spark.read.parquet(str(silver_path))
+
+    assert actual.count() == 3
+    assert actual.filter(F.col("snapshot_date") == date(2026, 3, 1)).count() == 3
+    assert actual.filter(F.col("play_id") == 100).count() == 1
+    assert actual.filter(F.col("play_id") == 101).count() == 1
+    assert actual.filter(F.col("play_id") == 102).count() == 1
 
 
 def test_run_silver_plays_routes_invalid_rows_to_validation_errors(
@@ -234,7 +283,7 @@ def test_run_silver_plays_routes_invalid_rows_to_validation_errors(
         bronze_path,
     )
 
-    run_silver_plays(spark, str(bronze_path))
+    run_silver_plays(spark, str(bronze_path), "2026-03-05", str(silver_path.parent))
 
     actual_silver = spark.read.parquet(str(silver_path))
     expected_silver = _read_expected_silver(
@@ -280,7 +329,8 @@ def test_run_silver_plays_sets_late_arriving_flag_for_delayed_records(
         bronze_path,
     )
 
-    run_silver_plays(spark, str(bronze_path))
+    run_silver_plays(spark, str(bronze_path), "2026-03-04", str(silver_path.parent))
+    run_silver_plays(spark, str(bronze_path), "2026-03-03", str(silver_path.parent))
 
     actual_silver = spark.read.parquet(str(silver_path))
     expected_silver = _read_expected_silver(
@@ -293,4 +343,6 @@ def test_run_silver_plays_sets_late_arriving_flag_for_delayed_records(
         SILVER_PLAYS_WITH_SK_SCHEMA,
         "play_sk",
     )
+    assert [row["play_id"] for row in actual_silver.filter("late_arriving_data").collect()] == [201]
+    assert actual_silver.filter(F.col("play_id") == 201).first()["event_date"] == date(2026, 3, 2)
     assert not errors_path.exists()

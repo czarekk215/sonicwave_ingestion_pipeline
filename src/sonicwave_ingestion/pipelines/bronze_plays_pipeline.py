@@ -8,6 +8,7 @@ def run_bronze_plays(
     spark: SparkSession,
     source_path: str,
     snapshot_date: str,
+    bronze_path: str,
 ) -> None:
     plays_df, corrupt_rows = bronze_load(
         spark=spark,
@@ -16,7 +17,7 @@ def run_bronze_plays(
         snapshot_date=snapshot_date,
     )
 
-    bronze_save(data=plays_df, source_name="plays")
+    bronze_save(data=plays_df, source_name="plays", bronze_path=bronze_path)
 
     if not corrupt_rows.isEmpty():
-        bronze_save_errors(data=corrupt_rows, source_name="plays")
+        bronze_save_errors(data=corrupt_rows, source_name="plays", bronze_path=bronze_path)

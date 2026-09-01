@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -17,16 +16,7 @@ if str(PROJECT_SRC) not in sys.path:
 
 
 @pytest.fixture(scope="session")
-def spark_workdir(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
-    workdir = tmp_path_factory.mktemp("spark-workdir")
-    previous_cwd = Path.cwd()
-    os.chdir(workdir)
-    yield workdir
-    os.chdir(previous_cwd)
-
-
-@pytest.fixture(scope="session")
-def spark(spark_workdir: Path) -> Iterator[SparkSession]:
+def spark() -> Iterator[SparkSession]:
     session = (
         SparkSession.builder.master("local[1]")
         .appName("sonicwave-transforms-tests")

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
@@ -72,14 +71,6 @@ def test_bronze_load_routes_corrupt_json_rows_to_quarantine(
     assert error_row["error_reason"] is not None
 
 
-@pytest.fixture
-def bronze_workdir(spark_workdir: Path) -> Path:
-    data_path = spark_workdir / "data"
-    if data_path.exists():
-        shutil.rmtree(data_path)
-    return spark_workdir
-
-
 def _write_source_rows(target_dir: Path, filename: str, rows: list[dict[str, str | None]]) -> None:
     target_dir.mkdir(parents=True, exist_ok=True)
     payload = "\n".join(json.dumps(row) for row in rows)
@@ -89,12 +80,11 @@ def _write_source_rows(target_dir: Path, filename: str, rows: list[dict[str, str
 def test_run_bronze_plays_rerun_overwrites_snapshot_partition(
     spark: SparkSession,
     tmp_path: Path,
-    bronze_workdir: Path,
 ) -> None:
     snapshot_date = "2026-03-02"
     source_path = tmp_path / "plays"
     source_snapshot_dir = source_path / snapshot_date
-    bronze_path = bronze_workdir / "data" / "bronze" / "plays"
+    bronze_path = tmp_path / "bronze" / "plays"
 
     first_rows: list[dict[str, str | None]] = [
         _plays_row(),
@@ -121,13 +111,13 @@ def test_run_bronze_plays_rerun_overwrites_snapshot_partition(
     ]
 
     _write_source_rows(source_snapshot_dir, "plays.json", first_rows)
-    run_bronze_plays(spark, str(source_path), snapshot_date)
+    run_bronze_plays(spark, str(source_path), snapshot_date, str(bronze_path.parent))
 
     first_loaded = spark.read.parquet(str(bronze_path)).filter("snapshot_date = DATE'2026-03-02'")
     assert {row["play_id"] for row in first_loaded.select("play_id").collect()} == {"1000", "1001"}
 
     _write_source_rows(source_snapshot_dir, "plays.json", second_rows)
-    run_bronze_plays(spark, str(source_path), snapshot_date)
+    run_bronze_plays(spark, str(source_path), snapshot_date, str(bronze_path.parent))
 
     reloaded = spark.read.parquet(str(bronze_path)).filter("snapshot_date = DATE'2026-03-02'")
     assert reloaded.count() == 1

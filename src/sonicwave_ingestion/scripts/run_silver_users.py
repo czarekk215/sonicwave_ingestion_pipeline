@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
+from datetime import date
 from pathlib import Path
 
 from pyspark.sql import SparkSession
@@ -11,7 +12,15 @@ if __package__ in {None, ""}:
     # Allow direct execution from the repository root.
     sys.path.append(str(Path(__file__).resolve().parents[2]))
 
+
 from sonicwave_ingestion.pipelines import run_silver_users
+
+
+def _parse_snapshot_date(value: str) -> str:
+    try:
+        return date.fromisoformat(value).isoformat()
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("Expected ISO date: YYYY-MM-DD.") from error
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -24,6 +33,17 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Path to the Bronze parquet dataset, e.g. ./data/bronze/users",
     )
+    parser.add_argument(
+        "--snapshot-date",
+        required=True,
+        type=_parse_snapshot_date,
+        help="Snapshot date in ISO format (YYYY-MM-DD).",
+    )
+    parser.add_argument(
+        "--silver-path",
+        default="./data/silver",
+        help="Base directory for Silver parquet output.",
+    )
 
     return parser
 
@@ -35,6 +55,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         run_silver_users(
             spark=spark,
             source_path=args.source_path,
+            snapshot_date=args.snapshot_date,
+            silver_path=args.silver_path,
         )
     finally:
         spark.stop()

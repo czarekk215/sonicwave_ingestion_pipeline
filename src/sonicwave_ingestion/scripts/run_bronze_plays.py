@@ -35,6 +35,11 @@ def _build_parser() -> argparse.ArgumentParser:
         type=_parse_snapshot_date,
         help="Snapshot date in ISO format (YYYY-MM-DD).",
     )
+    parser.add_argument(
+        "--bronze-path",
+        default="./data/bronze",
+        help="Base directory for Bronze parquet output.",
+    )
     return parser
 
 
@@ -46,6 +51,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             spark=spark,
             source_path=args.source_path,
             snapshot_date=args.snapshot_date,
+            bronze_path=args.bronze_path,
         )
     finally:
         spark.stop()

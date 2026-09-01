@@ -46,19 +46,19 @@ def bronze_load(
     return valid_df, error_df
 
 
-def bronze_save(data: DataFrame, source_name: str) -> None:
+def bronze_save(data: DataFrame, source_name: str, bronze_path: str) -> None:
     (
         data.write.option("partitionOverwriteMode", "dynamic")
         .mode("overwrite")
         .partitionBy("snapshot_date")
-        .parquet(f"./data/bronze/{source_name}")
+        .parquet(f"{bronze_path}/{source_name}")
     )
 
 
-def bronze_save_errors(data: DataFrame, source_name: str) -> None:
+def bronze_save_errors(data: DataFrame, source_name: str, bronze_path: str) -> None:
     (
         data.write.option("partitionOverwriteMode", "dynamic")
         .mode("overwrite")
         .partitionBy("snapshot_date")
-        .parquet(f"./data/bronze/{source_name}_errors")
+        .parquet(f"{bronze_path}/{source_name}_errors")
     )
